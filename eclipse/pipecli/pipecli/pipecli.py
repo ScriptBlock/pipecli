@@ -9,34 +9,36 @@ config = {}
 context = ssl.SSLContext(ssl.PROTOCOL_SSLv23)
 context.verify_mode = ssl.CERT_NONE
 
+basePipeline = {"bypassValidation":True, "createUserId":"", "data":"","description":"", "name":""}
 
 
 def checkparams():
     parser = argparse.ArgumentParser(description="Utility for exporting and importing pipelines.  You will need your DSP client secret.  You can obtain this by executing \"sudo kubectl get -n dsp secret auth-provider-api-credentials -o go-template='{{ .data.password | base64decode }}'\" on a DSP master node")
 
-    parser.add_argument("--pipematch", "-n", help="Use a regular expression to match pipeline name.  This parameter can be repeated.", action='append')
-    parser.add_argument("--pipeid", "-id", help="Use pipeline IDs. This parameter can be repeated", action='append')
+    parser.add_argument("--namematch", "-n", help="Use a regular expression to match pipeline name.  This parameter can be repeated.", action='append')
+    parser.add_argument("--idmatch", "-i", help="Use pipeline IDs. This parameter can be repeated", action='append')
     parser.add_argument("--filename", "-f", help="File name for export/import")
     parser.add_argument("--server", "-s", help="DSP server to contact")
     parser.add_argument("--port", "-p", help="DSP port number", default=31000)
     parser.add_argument("--secret", "-secret", help="Client secret.  \"sudo kubectl get -n dsp secret auth-provider-api-credentials -o go-template='{{ .data.password | base64decode }}'\"")
-    
+    parser.add_argument("--confirm", "-c", help="Confirm overwriting existing pipelines", action="store_true")
     
     action_group = parser.add_mutually_exclusive_group()
     action_group.add_argument("--backup", "-b", help="Export the pipelines that match the given patterns/numbers", action="store_true")
     action_group.add_argument("--restore", "-r", help="Import the pipelines that match the given patterns/numbers", action="store_true")
-    action_group.add_argument("--list", "-l", help="List pipelines with their IDs.  Can be combined with PIPEMATCH and PIPEID to test patterns.", action="store_true")
+    action_group.add_argument("--list", "-l", help="List pipelines with their IDs.  Can be combined with NAMEMATCH and IDMATCH to test patterns.", action="store_true")
     action_group.add_argument("--testauth", "-t", help="You can use this to test your client_secret authorization", action="store_true")
     
 
     args = parser.parse_args()
 
-    config["nameMatches"] = args.pipematch
-    config["idMatches"] = args.pipeid
+    config["nameMatches"] = args.namematch
+    config["idMatches"] = args.idmatch
     config["filename"] = args.filename
     config["server"] = args.server
     config["port"] = args.port
     config["secret"] = args.secret
+    config["confirm_overwrite"] = args.confirm
     
     
     if not args.backup and not args.restore and not args.list and not args.testauth:
@@ -57,12 +59,14 @@ def obtainCredentials(config):
     dspConnection.request('POST', '/system/identity/v2beta1/token', params, header)
     
     resp = dspConnection.getresponse()
+
     
     #print(resp.status, resp.reason)
     
     if resp.status == 200:
         data = resp.read()
         dataJSON = json.loads(data)    
+        dspConnection.close()
         return dataJSON["access_token"]
     else:
         print("Unable to get access token from identity API.  check your client_secret")
@@ -90,11 +94,13 @@ def buildRequestHeader():
 def testAuthorizationToken():
     dspConnection.request('GET', '/default/streams/v2beta1/license', '', buildRequestHeader())
     resp = dspConnection.getresponse()
+    
     if resp.status == 200:
         print("Connection succeeded")
     else:
         print("Connection failed")
         print(resp.reason)
+    dspConnection.close()
 
 def pipeListSort(e):
     return e["name"]
@@ -120,11 +126,15 @@ def cullToNameMatch(data):
 def getPipeline(pipeID):
     dspConnection.request('GET', '/default/streams/v2beta1/pipelines/' + pipeID, '', buildRequestHeader())
     resp = dspConnection.getresponse()
+    
     if resp.status == 200:
+        dspConnection.close()
         return json.loads(resp.read())
     else:
         print("failed to get pipeline id: " + pipeID)
+        dspConnection.close()
         quit(resp.reason)
+
     
 
 def getPipelines(forRestore = False):
@@ -137,14 +147,18 @@ def getPipelines(forRestore = False):
     else:
         dspConnection.request('GET', '/default/streams/v2beta1/pipelines?includeData=false', '', buildRequestHeader())
         resp = dspConnection.getresponse()
+        
         if resp.status == 200:
             #print("got list of pipelines")
             data = resp.read()
             pipelines = (json.loads(data))["items"]
+            dspConnection.close()
         else:
             print("Failed to get list of pipelines.") 
+            dspConnection.close()
             quit(resp.reason)
-    
+        
+
     pipelines.sort(key=pipeListSort)
     
     if not config["idMatches"] and not config["nameMatches"]: 
@@ -191,25 +205,94 @@ def restorePipelines():
 
     pipelinesFromFile = getPipelines(True)
     
-    print("Retrieved the following pipelines for restore from the file: " + config["filename"])
-    for i in pipelinesFromFile:
-        print(i["name"] + ":\t[" + i["id"] + "]\t" + i["description"])
+    #print("Retrieved the following pipelines for restore from the file: " + config["filename"])
+    #for i in pipelinesFromFile:
+    #    print(i["name"] + ":\t[" + i["id"] + "]\t" + i["description"])
 
     
     pipelinesFromDestinationServer = getPipelines()
+    #print("Retrieved the following pipelines from the server")
+    #for i in pipelinesFromDestinationServer:
+    #    print(i["name"] + ":\t[" + i["id"] + "]\t" + i["description"])
 
+
+    uniquePipelines = pipelinesFromFile.copy()
     overlappingPipelines = []
     for i in pipelinesFromFile:
         for j in pipelinesFromDestinationServer:
             if i["name"] == j["name"]:
-                overlappingPipelines.append(i["name"])
+                overlappingPipelines.append({'name':i["name"], 'id':j["id"], 'data':i["data"]})
+                for k in uniquePipelines:
+                    if i["name"] == k["name"]:
+                        #print("removing " + i["name"] + " from unique list")
+                        uniquePipelines.remove(k)
+                        break
+                        
+
+    #print("unique")
+    #for i in uniquePipelines:
+    #    print(i["name"] + ":\t[" + i["id"] + "]")
+
+    #print("overlapping")
+    #for i in overlappingPipelines:
+    #    print(i["name"] + ":\t[" + i["id"] + "]")
     
+    
+
     if len(overlappingPipelines) > 0 and not config["confirm_overwrite"]:
         print("The following pipelines already exist in the target DSP instance.  This utility will update the existing pipelines with the definition contained in the backup file. Execute this script with the --confirm switch to proceed.")
+        for i in overlappingPipelines:
+            print(i["name"] + ":\t[" + i["id"] + "]")
 
 
     #main restore procedure here
-    
+    for i in uniquePipelines:
+        newPipeline = basePipeline.copy()
+        newPipeline["data"] = i["data"]
+        newPipeline["name"] = i["name"]
+        newPipeline["createUserId"] = i["createUserId"]
+        newPipeline["description"] = i["description"]
+
+        postJSON = json.dumps(newPipeline)
+        postHeader = buildRequestHeader()
+        postHeader["Content-Type"] = "application/json"
+        postHeader["Accept"] = "application/json"
+        #print(postJSON)
+        dspConnection.request('POST', '/default/streams/v2beta1/pipelines', postJSON, postHeader)
+        resp = dspConnection.getresponse()
+        #print(resp.status, resp.reason)
+        if resp.status < 300:
+            print("Created new pipeline: " + i["name"])
+        else:
+            print("Failed to create new pipelines for " + i["name"])
+            print(resp.reason)
+
+        dspConnection.close()
+
+    if config["confirm_overwrite"]:
+        for i in overlappingPipelines:
+            newPipeline = {}
+            newPipeline["bypassValidation"] = True
+            newPipeline["data"] = i["data"]
+            newPipeline["id"] = i["id"]
+
+            postJSON = json.dumps(newPipeline)
+            postHeader = buildRequestHeader()
+            postHeader["Content-Type"] = "application/json"
+            postHeader["Accept"] = "application/json"
+            #print(postJSON)
+            dspConnection.request('PATCH', '/default/streams/v2beta1/pipelines/' + i["id"], postJSON, postHeader)
+            resp = dspConnection.getresponse()
+            #print(resp.status, resp.reason)
+            if resp.status < 300:
+                print("Updated existing pipeline: " + i["name"])
+            else:
+                print("Failed to update pipeline for " + i["name"])
+                print(resp.reason)
+
+            dspConnection.close()
+
+
 
 def main():
     global config
