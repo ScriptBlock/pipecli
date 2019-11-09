@@ -3,6 +3,7 @@ import http.client
 import urllib.parse
 import ssl
 import json
+import re
 
 config = {}
 context = ssl.SSLContext(ssl.PROTOCOL_SSLv23)
@@ -49,7 +50,7 @@ def checkparams():
     return config
 
 def obtainCredentials(config):
-    print("Getting auth token")
+    #print("Getting auth token")
     params = urllib.parse.urlencode({'client_id': 'client-api', 'client_secret': config["secret"], 'grant_type': 'client_credentials' })
     header = {"Content-type":"application/x-www-form-urlencoded"}
     
@@ -57,7 +58,7 @@ def obtainCredentials(config):
     
     resp = dspConnection.getresponse()
     
-    print(resp.status, resp.reason)
+    #print(resp.status, resp.reason)
     
     if resp.status == 200:
         data = resp.read()
@@ -74,12 +75,14 @@ def setupConnection(config):
     dspConnection = http.client.HTTPSConnection(config["server"], config["port"], context=context)
     
 def closeConnection():
-    global dspConnection
-    dspConnection.close()
+    try : 
+        dspConnection.close()
+    except:
+        pass
 
 def buildRequestHeader():
     header = {"Authorization": "Bearer " + config["access_token"]}
-    print("Built logged in request header")
+    #print("Built logged in request header")
     #print(header)
     return header
 
@@ -106,38 +109,99 @@ def cullToIDList(data):
     return retVal
 
 def cullToNameMatch(data):
-    pass
+    retVal = []
+    for i in config["nameMatches"]:
+        for j in data:
+            if re.search(i, j["name"]): retVal.append(j)
+    
+    return retVal
 
 
-def listPipelines():
-    dspConnection.request('GET', '/default/streams/v2beta1/pipelines?includeData=false', '', buildRequestHeader())
+def getPipeline(pipeID):
+    dspConnection.request('GET', '/default/streams/v2beta1/pipelines/' + pipeID, '', buildRequestHeader())
     resp = dspConnection.getresponse()
     if resp.status == 200:
-        print("got list of pipelines")
-        data = resp.read()
-        pipelines = (json.loads(data))["items"]
-        pipelines.sort(key=pipeListSort)
-        
-        if config["idMatches"]: pipelines = cullToIDList(pipelines)
-        
-        for i in pipelines:
-            print(i["name"] + ":\t" + i["description"] + "\t\t\t[" + i["id"] + "]")
+        return json.loads(resp.read())
     else:
-        print("Failed to get list of pipelines.") 
+        print("failed to get pipeline id: " + pipeID)
         quit(resp.reason)
+    
+
+def getPipelines():
+    retVal = []
+    if config["filename"] and not config["server"]:
+        jsonFile = open(config["filename"], "r")
+        pipelines = json.loads(jsonFile.read())
+        
+    
+    else:
+        dspConnection.request('GET', '/default/streams/v2beta1/pipelines?includeData=false', '', buildRequestHeader())
+        resp = dspConnection.getresponse()
+        if resp.status == 200:
+            #print("got list of pipelines")
+            data = resp.read()
+            pipelines = (json.loads(data))["items"]
+        else:
+            print("Failed to get list of pipelines.") 
+            quit(resp.reason)
+    
+    pipelines.sort(key=pipeListSort)
+    
+    if not config["idMatches"] and not config["nameMatches"]: 
+        retVal = pipelines
+    else:
+        if config["idMatches"]:  
+            for i in cullToIDList(pipelines):
+                if i not in retVal:
+                    retVal.append(i)
+
+        if config["nameMatches"]: 
+            for i in cullToNameMatch(pipelines):
+                if i not in retVal:
+                    retVal.append(i)
+
+    #print(retVal)
+    return retVal
+
+    
+
+def listPipelines():
+    pipelines = getPipelines()
+        
+    for i in pipelines:
+        print(i["name"] + ":\t" + i["description"] + "\t\t\t[" + i["id"] + "]")
+
+def backupPipelines():
+    pipelines = getPipelines()
+    pipelinesToBackup = []
+    for i in pipelines:
+        pipelinesToBackup.append(getPipeline(i["id"]))
+    
+    if config["filename"]:
+        backupFile = open(config["filename"], "w")
+        backupFile.write(json.dumps(pipelinesToBackup))
+        backupFile.close()
+    else:
+        print(json.dumps(pipelinesToBackup))
+    
 
 def main():
     global config
     config = checkparams()
-    setupConnection(config)
-    config["access_token"] = obtainCredentials(config)
+    if config["server"] and config["secret"]:
+        setupConnection(config)
+        config["access_token"] = obtainCredentials(config)
     
     if config["mode"] == "testauth":
         testAuthorizationToken()
     
     if config["mode"] == "list":
-        print("list mode")
+        #print("list mode")
         listPipelines()
+    
+    if config["mode"] == "backup":
+        #print("backup mode")
+        backupPipelines()
     
     closeConnection()
     
