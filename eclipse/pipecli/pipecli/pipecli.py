@@ -127,9 +127,9 @@ def getPipeline(pipeID):
         quit(resp.reason)
     
 
-def getPipelines():
+def getPipelines(forRestore = False):
     retVal = []
-    if config["filename"] and not config["server"]:
+    if (config["filename"] and not config["server"]) or forRestore:
         jsonFile = open(config["filename"], "r")
         pipelines = json.loads(jsonFile.read())
         
@@ -185,6 +185,32 @@ def backupPipelines():
         print(json.dumps(pipelinesToBackup))
     
 
+def restorePipelines():
+    if not config["filename"]: 
+        quit("you have to specify a filename from which to restore")
+
+    pipelinesFromFile = getPipelines(True)
+    
+    print("Retrieved the following pipelines for restore from the file: " + config["filename"])
+    for i in pipelinesFromFile:
+        print(i["name"] + ":\t[" + i["id"] + "]\t" + i["description"])
+
+    
+    pipelinesFromDestinationServer = getPipelines()
+
+    overlappingPipelines = []
+    for i in pipelinesFromFile:
+        for j in pipelinesFromDestinationServer:
+            if i["name"] == j["name"]:
+                overlappingPipelines.append(i["name"])
+    
+    if len(overlappingPipelines) > 0 and not config["confirm_overwrite"]:
+        print("The following pipelines already exist in the target DSP instance.  This utility will update the existing pipelines with the definition contained in the backup file. Execute this script with the --confirm switch to proceed.")
+
+
+    #main restore procedure here
+    
+
 def main():
     global config
     config = checkparams()
@@ -202,6 +228,9 @@ def main():
     if config["mode"] == "backup":
         #print("backup mode")
         backupPipelines()
+
+    if config["mode"] == "restore":
+        restorePipelines()
     
     closeConnection()
     
