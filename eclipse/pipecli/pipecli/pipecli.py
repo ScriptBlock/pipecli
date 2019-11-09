@@ -25,11 +25,10 @@ def checkparams():
     action_group.add_argument("--backup", "-b", help="Export the pipelines that match the given patterns/numbers", action="store_true")
     action_group.add_argument("--restore", "-r", help="Import the pipelines that match the given patterns/numbers", action="store_true")
     action_group.add_argument("--list", "-l", help="List pipelines with their IDs.  Can be combined with PIPEMATCH and PIPEID to test patterns.", action="store_true")
+    action_group.add_argument("--testauth", "-t", help="You can use this to test your client_secret authorization", action="store_true")
     
 
     args = parser.parse_args()
-
-    global config
 
     config["nameMatches"] = args.pipematch
     config["idMatches"] = args.pipeid
@@ -39,16 +38,17 @@ def checkparams():
     config["secret"] = args.secret
     
     
-    if not args.backup and not args.restore and not args.list:
+    if not args.backup and not args.restore and not args.list and not args.testauth:
         quit("You must specify at least one action ")
-    
-    
+        
     if args.backup: config["mode"] = "backup"
     if args.restore: config["mode"] = "restore"
     if args.list: config["mode"] = "list"
+    if args.testauth: config["mode"] = "testauth"
     
+    return config
 
-def obtainCredentials():
+def obtainCredentials(config):
     print("Getting auth token")
     params = urllib.parse.urlencode({'client_id': 'client-api', 'client_secret': config["secret"], 'grant_type': 'client_credentials' })
     header = {"Content-type":"application/x-www-form-urlencoded"}
@@ -58,28 +58,88 @@ def obtainCredentials():
     resp = dspConnection.getresponse()
     
     print(resp.status, resp.reason)
-    data = resp.read()
     
-    dataJSON = json.loads(data)    
+    if resp.status == 200:
+        data = resp.read()
+        dataJSON = json.loads(data)    
+        return dataJSON["access_token"]
+    else:
+        print("Unable to get access token from identity API.  check your client_secret")
+        quit(resp.reason)
+        
     
-    config["token"] = dataJSON["access_token"]
-    print("Token: ", dataJSON["access_token"])
 
-
-def setupConnection():
+def setupConnection(config):
     global dspConnection
     dspConnection = http.client.HTTPSConnection(config["server"], config["port"], context=context)
     
-    
+def closeConnection():
+    global dspConnection
+    dspConnection.close()
+
+def buildRequestHeader():
+    header = {"Authorization": "Bearer " + config["access_token"]}
+    print("Built logged in request header")
+    #print(header)
+    return header
+
+
+def testAuthorizationToken():
+    dspConnection.request('GET', '/default/streams/v2beta1/license', '', buildRequestHeader())
+    resp = dspConnection.getresponse()
+    if resp.status == 200:
+        print("Connection succeeded")
+    else:
+        print("Connection failed")
+        print(resp.reason)
+
+def pipeListSort(e):
+    return e["name"]
+
+def cullToIDList(data):
+    retVal = []
+    #print("Checking id list against")
+    #print(config["idMatches"])
+    for i in data:
+        if i["id"] in config["idMatches"]:
+            retVal.append(i)
+    return retVal
+
+def cullToNameMatch(data):
+    pass
+
+
+def listPipelines():
+    dspConnection.request('GET', '/default/streams/v2beta1/pipelines?includeData=false', '', buildRequestHeader())
+    resp = dspConnection.getresponse()
+    if resp.status == 200:
+        print("got list of pipelines")
+        data = resp.read()
+        pipelines = (json.loads(data))["items"]
+        pipelines.sort(key=pipeListSort)
+        
+        if config["idMatches"]: pipelines = cullToIDList(pipelines)
+        
+        for i in pipelines:
+            print(i["name"] + ":\t" + i["description"] + "\t\t\t[" + i["id"] + "]")
+    else:
+        print("Failed to get list of pipelines.") 
+        quit(resp.reason)
 
 def main():
-    checkparams()
-    setupConnection()
-    obtainCredentials()
+    global config
+    config = checkparams()
+    setupConnection(config)
+    config["access_token"] = obtainCredentials(config)
+    
+    if config["mode"] == "testauth":
+        testAuthorizationToken()
     
     if config["mode"] == "list":
         print("list mode")
+        listPipelines()
     
+    closeConnection()
     
     
 main()
