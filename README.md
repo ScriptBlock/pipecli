@@ -18,10 +18,10 @@ Uses client secret and API to do pipelines backups and restores to and from text
 
 ## Parameters
  - namematch: regex pattern for pipelines names to match.  can be specified multiple times
- 	- eg - ./pipecli ... --namematch ^Foo --namematch Bar$
+ 	- eg - `./pipecli ... --namematch "^Foo" --namematch "Bar$"`
 
  - idmatch: literal pipeline ID matching
- 	- eg - ./pipecli .. --idmatch 0eaa1683-6b43-46fa-9290-8826e6c9bf32
+ 	- eg - `./pipecli .. --idmatch 0eaa1683-6b43-46fa-9290-8826e6c9bf32`
 
  - filename:  for **backups**, this is the file that the backup data should be written to.  
               for **restores**, this is the file that the restore data is coming from.
