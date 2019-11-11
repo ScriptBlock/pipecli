@@ -35,3 +35,28 @@ Uses client secret and API to do pipelines backups and restores to and from text
  - secret: this is the client-id secret from your dsp instance, which notably will be different if you are backing up and restore to/from different DSP instances.  The easiest way to get the client secret is to SSH into a DSP server and execute `sudo kubectl get -n dsp secret auth-provider-api-credentials -o go-template='{{ .data.password | base64decode }}'`.  You can use this client-id verbatim in the --secret parameter.
 
  - confirm:  user must specify this parameter to overwrite existing pipelines as part of restore.
+
+## Examples
+
+### Simple backup of all pipelines
+
+`./pipecli.py --server <dspserverIP> --secret <clientsecret> --backup --filename dsp-backup-01-01-2020.json`
+
+### Backup of all pipelines whos name contains the word Cisco
+
+`./pipecli.py --server <dspserverIP> --secret <clientsecret> --backup --namematch Ciscoi --filename dsp-cisco-backup-01-01-2020.json`
+
+### List all pipelines in a backup file
+`./pipecli.py --filename dsp-backup.json --list`
+
+### List all pipelines that start with the letter A in a backup file 
+`./pipecli.py --filename dsp-backup.json --list --namematch "^A"`
+
+
+### Restore all pipelines from a backup file to a DSP instance
+`./pipecli.py --server <dspserverIP> --secret <clientsecret> --restore --filename dsp-backup-01-01-2020.json`
+
+### Restore all pipelines that end with the word Test from a backup file to a DSP instance
+`./pipecli.py --server <dspserverIP> --secret <clientsecret> --restore --filename dsp-backup-01-01-2020.json --namematch "Test$"`
+
+
